@@ -382,4 +382,32 @@ def getHostnameFromBucket(bucket):
     return Config.Config().host_bucket % { 'bucket' : bucket }
 __all__.append("getHostnameFromBucket")
 
+def encode_multipart_formdata(fields, file_key, file_value, content_type, file_name='file'):
+    """
+    fields is a sequence of (name, value) elements for regular form fields.
+    file_key is the key under which to upload the file.
+    file_value is the value of the file to upload.
+    Return (content_type, body) ready for httplib.HTTP instance
+    """
+    BOUNDARY = '----------sllDSIGJj1DJBCKK'
+    CRLF = '\r\n'
+    L = []
+    for (key, value) in fields:
+        L.append('--' + BOUNDARY)
+        L.append('Content-Disposition: form-data; name="%s"' % key)
+        L.append('')
+        L.append(value)
+
+    L.append('--' + BOUNDARY)
+    L.append('Content-Disposition: form-data; name="%s"; filename="%s"' % (file_key, file_name))
+    L.append('Content-Type: %s' % content_type)
+    L.append('')
+    L.append(file_value)
+    L.append('--' + BOUNDARY + '--')
+    L.append('')
+    body = CRLF.join(L)
+    content_type = 'multipart/form-data; boundary=%s' % BOUNDARY
+    return content_type, body
+__all__.append("encode_multipart_formdata")
+
 # vim:et:ts=4:sts=4:ai

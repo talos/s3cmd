@@ -241,7 +241,12 @@ def cmd_bucket_delete(args):
         _bucket_delete_one(uri)
         output(u"Bucket '%s' removed" % uri.uri())
 
-def cmd_object_put(args):
+def cmd_object_policy_post(args):
+    b64_signature = args.pop()
+    b64_policy = args.pop()
+    cmd_object_put(args, policy_post=True, b64_policy=b64_policy, b64_signature=b64_signature)
+
+def cmd_object_put(args, policy_post=False, b64_policy=None, b64_signature=None):
     cfg = Config()
     s3 = S3(cfg)
 
@@ -296,7 +301,10 @@ def cmd_object_put(args):
         if Config().encrypt:
             exitcode, full_name, extra_headers["x-amz-meta-s3tools-gpgenc"] = gpg_encrypt(full_name_orig)
         try:
-            response = s3.object_put(full_name, uri_final, extra_headers, extra_label = seq_label)
+            if policy_post:
+                response = s3.object_policy_post(full_name, uri_final, b64_policy, b64_signature, extra_headers, extra_label = seq_label)
+            else:
+                response = s3.object_put(full_name, uri_final, extra_headers, extra_label = seq_label)
         except S3UploadError, e:
             error(u"Upload of '%s' failed too many times. Skipping that file." % full_name_orig)
             continue
@@ -1383,6 +1391,7 @@ def get_commands_list():
     {"cmd":"ls", "label":"List objects or buckets", "param":"[s3://BUCKET[/PREFIX]]", "func":cmd_ls, "argc":0},
     {"cmd":"la", "label":"List all object in all buckets", "param":"", "func":cmd_buckets_list_all_all, "argc":0},
     {"cmd":"put", "label":"Put file into bucket", "param":"FILE [FILE...] s3://BUCKET[/PREFIX]", "func":cmd_object_put, "argc":2},
+    {"cmd":"policypost", "label":"Post file into bucket using policy and signature", "param":"FILE [FILE...] s3://BUCKET[/PREFIX] B64_POLICY B64_SIGNATURE", "func":cmd_object_policy_post, "argc":4},
     {"cmd":"get", "label":"Get file from bucket", "param":"s3://BUCKET/OBJECT LOCAL_FILE", "func":cmd_object_get, "argc":1},
     {"cmd":"del", "label":"Delete file from bucket", "param":"s3://BUCKET/OBJECT", "func":cmd_object_del, "argc":1},
     #{"cmd":"mkdir", "label":"Make a virtual S3 directory", "param":"s3://BUCKET/path/to/dir", "func":cmd_mkdir, "argc":1},

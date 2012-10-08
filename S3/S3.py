@@ -388,6 +388,122 @@ class S3(object):
         response = self.send_file(request, file, labels)
         return response
 
+    def object_policy_post(self, filename, uri, b64_policy, b64_signature,
+                           extra_headers = None, extra_label = ""):
+        # TODO TODO
+        # Make it consistent with stream-oriented object_get()
+        if uri.type != "s3":
+            raise ValueError("Expected URI type 's3', got '%s'" % uri.type)
+
+        if not os.path.isfile(filename):
+            raise InvalidFileError(u"%s is not a regular file" % unicodise(filename))
+        try:
+            file = open(filename, "rb")
+            size = os.stat(filename)[ST_SIZE]
+        except (IOError, OSError), e:
+            raise InvalidFileError(u"%s: %s" % (unicodise(filename), e.strerror))
+
+        headers = SortedDict(ignore_case = True)
+        #if extra_headers:
+        #    headers.update(extra_headers)
+
+        ## MIME-type handling
+        content_type = self.config.mime_type
+        if not content_type and self.config.guess_mime_type:
+            content_type = mime_magic(filename)
+        if not content_type:
+            content_type = self.config.default_mime_type
+        debug("Content-Type set to '%s'" % content_type)
+
+        headers["content-length"] = size
+        request = self.create_request("OBJECT_POST", uri = uri, headers = headers)
+        labels = { 'source' : unicodise(filename), 'destination' : unicodise(uri.uri()), 'extra' : extra_label }
+
+        timestamp_start = time.time()
+        method_string, resource, headers = request.get_triplet()
+        headers = {}
+
+        extra_data = {
+            'key': resource['uri'][1:],
+            'AWSAccessKeyId': self.config.access_key,
+            'Policy': b64_policy,
+            'Signature': b64_signature,
+        }
+        upload_content_type, upload_body = encode_multipart_formdata(extra_data.items(),
+                                                                     'file',
+                                                                     file.read(),
+                                                                     content_type)
+
+        headers['content-type'] = upload_content_type
+        headers['content-length'] = len(upload_body)
+
+        try:
+            conn = httplib.HTTPSConnection('s3.amazonaws.com')
+            conn.connect()
+            conn.putrequest(method_string, '/' + resource['bucket'])
+
+            for header in headers.keys():
+                conn.putheader(header, str(headers[header]))
+            conn.endheaders()
+        except Exception, e:
+            if self.config.progress_meter:
+                progress.done("failed")
+            #if retries:
+            #    warning("Retrying failed request: %s (%s)" % (resource['uri'], e))
+            #    warning("Waiting %d sec..." % self._fail_wait(retries))
+            #    time.sleep(self._fail_wait(retries))
+            #    # Connection error -> same throttle value
+            #    #return self.send_file(request, file, labels, throttle, retries - 1, offset, chunk_size)
+            else:
+                raise S3UploadError("Upload failed for: %s" % resource['uri'])
+
+        try:
+            conn.send(upload_body)
+            response = {}
+            http_response = conn.getresponse()
+            response["status"] = http_response.status
+            response["reason"] = http_response.reason
+            response["headers"] = convertTupleListToDict(http_response.getheaders())
+            response["data"] = http_response.read()
+            response["size"] = size
+            conn.close()
+            debug(u"Response: %s" % response)
+        except Exception, e:
+            if self.config.progress_meter:
+                progress.done("failed")
+            debug("Giving up on '%s' %s" % (file.name, e))
+            raise S3UploadError("Upload failed for: %s" % resource['uri'])
+
+        timestamp_end = time.time()
+        response["elapsed"] = timestamp_end - timestamp_start
+        response["speed"] = response["elapsed"] and float(response["size"]) / response["elapsed"] or float(-1)
+
+        if response["status"] < 200 or response["status"] > 299:
+            #try_retry = False
+            #if response["status"] >= 500:
+            #    ## AWS internal error - retry
+            #    #try_retry = True
+            #elif response["status"] >= 400:
+            #    err = S3Error(response)
+            #    ## Retriable client error?
+            #    if err.code in [ 'BadDigest', 'OperationAborted', 'TokenRefreshRequired', 'RequestTimeout' ]:
+            #        try_retry = True
+
+            #if try_retry:
+            #if retries:
+            #    warning("Upload failed: %s (%s)" % (resource['uri'], S3Error(response)))
+            #    warning("Waiting %d sec..." % self._fail_wait(retries))
+            #    time.sleep(self._fail_wait(retries))
+            #    return self.send_file(request, file, labels, throttle, retries - 1, offset, chunk_size)
+            #else:
+            #raise S3UploadError
+
+            ## Non-recoverable error
+            warning("No retries implemented for policy post. Giving up on '%s'" % (file.name))
+            raise S3Error(response)
+
+        return response
+
     def object_get(self, uri, stream, start_position = 0, extra_label = ""):
         if uri.type != "s3":
             raise ValueError("Expected URI type 's3', got '%s'" % uri.type)
